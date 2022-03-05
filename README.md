@@ -249,3 +249,98 @@ fn main() {
 但以上代码好像和我们之前所了解到的内容相违背了: 我们并没有调用 `clone` 方法, 但是 `x` 始终是合法的而且并没有被移动至 `y`.
 
 原因是, 某些类型(如整型)在编译阶段大小已知, 并且全部存储在栈中, 所以对实际数据的拷贝很容易就实现. 这样的话, 当我们创建 `y` 变量之后, 就无需将 `x` 置为无效了. 也就是说, 对于这些类型来说, 无需区分深拷贝和浅拷贝, 是否调用 `clone` 都不会有差别.
+
+Rust 有一个特别的特性: `Copy` 方法, 这个方法存在于存储于栈中的数据类型(比如整型)中, 我们会在第十章对方法(trait)进行详细的介绍. 如果一个类型内置了 `Copy` 方法, 那么一个变量在赋值给另一个变量之后, 原变量依然是合法的. 对于实现了	 `Drop` 的类型, Rust 不会允许再实现 `Copy`. 如果某个类型的变量在离开作用域之后需要进行一些特殊的处理, 但我们为其实现了 `Copy` 方法的话, 就会遇到编译器错误. 在附录 C - [实现可派生特性](https://doc.rust-lang.org/book/appendix-03-derivable-traits.html)中, 我们可以了解到如何为某个类型的值添加 `Copy` 方法.
+
+那么哪些类型本身实现了 `Copy` 方法呢? 我们可以通过查看各个类型的文档来确定, 不过有一个基本的规则就是, 任何一组简单标量值的组合都可以实现 `Copy`, 不需要分配内存的类型或者属于特定形式资源的类型也可以实现 `Copy`. 下面列举了能够实现 `Copy` 方法的类型:
+
+- 所有整型, 比如 `u32`
+- 布尔类型: `bool`, 值为 `true` 或者 `false`
+- 所有浮点数类型, 比如 `f64`
+- 字符类型, `char`
+- 元组类型, 不过需要确保其中的每一项都实现了 `Copy`. 比如 `(i32, i32)`, 两项都实现了 `Copy`, 但是 `(i32, String)` 就不.
+
+### 所有权和函数
+
+在函数中传参与为变量赋值的语法类似. 给函数传递参数会进行移动(move)或者拷贝(copy)的操作, 和赋值进行的操作是一致的. 代码示例4-3在注释中详细说明了变量在哪个位置进入和离开作用域.
+
+```rust
+fn main() {
+    let s = String::from("hello");  // s 进入作用域
+
+    takes_ownership(s);             // s 的值被移动到函数中
+                                    // 函数执行结束之后被 drop, 在这里就不合法了 
+
+    let x = 5;                      // x 进入作用域
+
+    makes_copy(x);                  // x 的值被移动到函数中
+                                    // 因为类型是 i32, 所以是 Copy, 因此 x 变量始终存在
+
+} 
+// x 在这里离开作用域, 然后是 s, 因为 s 的值被 move, 所以没有什么特别的事情发生
+
+
+fn takes_ownership(some_string: String) { // some_string 进入作用域
+    println!("{}", some_string);
+} // some_string 在这里离开作用域, `drop` 被调用. 所占用的内存被释放
+
+fn makes_copy(some_integer: i32) { // some_integer comes into scope
+    println!("{}", some_integer);
+} // some_integer 在这里离开作用域
+```
+
+如果调用 `takes_ownership` 之后再使用 `s` 编译器会报错, 静态检查会免于我们碰到错误. 可以添加代码到 `main` 函数中, 尝试使用 `s` 和 `x` 以确认你能够在哪里使用他们, 所有权规则是如何限制使用的.
+
+### 返回值和作用域
+
+从函数中返回值同样能够转移所有权. 代码示例4-4中的, 展示了返回某个值的函数示例, 同样这里也对每一行关键代码添加了注释.
+
+```rust
+fn main() {
+    let s1 = gives_ownership(); // gives_ownership 将其返回值 move 给 s1 
+
+    let s2 = String::from("hello"); // s2 进入作用域
+
+    let s3 = takes_and_gives_back(s2); // s2 被 move 到 takes_and_gives_back, 同时函数返回值被 move 给 s3
+
+} // s3 在这里跳出作用域, 然后被 drop, s2 被 move, 因此无事发生. s1 跳出作用域然后被 drop 
+
+fn gives_ownership() -> String {
+    // 调用 gives_ownership 会 move 返回值
+
+    let some_string = String::from("yours"); // some_string 进入作用域
+
+    some_string // some_string 被返回 
+}
+
+// 该函数接受一个 String, 然后返回它 
+fn takes_and_gives_back(a_string: String) -> String {
+    // a_string 进入作用域
+
+    a_string // a_string 被返回并被 move 出
+}
+```
+
+变量的所有权每次都遵循同样的模式: 将值赋给所 move 的变量. 当包含栈数据的变量跳出作用域之后, `drop` 之后值就会被释放, 除非数据的所有权被转移给另一个变量.
+
+尽管如此, 通过函数获取控制权和返回控制权依然有点复杂. 如果我们想要让函数使用某个值, 但是不获取控制权, 应该怎么做呢? 如果所有值都需要传入传出使用的话, 难免有些繁琐. 除此之外, 我们还会想从函数中返回某些我们所想要的数据.
+
+对于这种情况, Rust 允许我们使用元组 (tuple) 类型来返回多个值, 看代码示例4-5:
+
+```rust
+fn main() {
+    let s1 = String::from("hello");
+
+    let (s2, len) = calculate_length(s1);
+
+    println!("The length of '{}' is {}.", s2, len);
+}
+
+fn calculate_length(s: String) -> (String, usize) {
+    let length = s.len(); // len() 返回 String 的长度值
+
+    (s, length)
+}
+```
+
+但这还是太形式主义了, 一个常用的场景, 实现起来却需要耗费那么大精力. 还好 Rust 提供了另一个特性, 我们不需要手动获取使用权, 就能够使用值, 这个特性叫做 **引用** (_reference_).
